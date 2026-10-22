@@ -1,0 +1,3 @@
+- insert:
+    - id: surrogate-sanitizer-guard
+      name: '@argszero/dsh-surrogate-sanitizer-guard'
