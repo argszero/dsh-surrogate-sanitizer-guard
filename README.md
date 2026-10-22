@@ -63,11 +63,17 @@ nothing.
 ## Install
 
 ```sh
-npm i github:argszero/dsh-surrogate-sanitizer-guard
+dsh plugin --profile <profile> add github:argszero/dsh-surrogate-sanitizer-guard
 ```
 
-The package declares `dsh.bundle.patch`, so mounting it as a bundle is enough.
-Mounted by hand instead:
+That single command is the whole install: it installs the package into the
+profile and adds it to the profile's bundle list. A plain `npm i` of the same
+spec is **inert on its own** — a bundle becomes a layer only when the profile's
+`package.json` lists it under `dsh.profile.bundles`
+(`packages/boot/app-boot/src/profile.ts`), and the plugin manager is what writes
+that list after an install (`packages/boot/plugin-manager/src/operations.ts`).
+
+The package declares `dsh.bundle.patch`. Mounted by hand instead:
 
 ```yaml
 - insert:
