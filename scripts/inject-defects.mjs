@@ -48,10 +48,19 @@ const MUTANTS = [
   ['listener not prepended', ', { prepend: true })', ')'],
   ['service requirement dropped', "export const inject = ['llm']", 'export const inject = []'],
   ['default export loses its inject', 'export default { name, inject, apply }', 'export default { name, apply }'],
-  ['warning repeated every request', 'if (reported.has(key)) return', ''],
+  ['warning repeated every request', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`\n    if (reported.has(key)) return', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`'],
   ['warning key collapses to one route', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`', "const key = 'route'"],
   ['request counter never moves', 'stats.requests += 1', ''],
-  ['repair counter never moves', 'stats.repaired += 1', 'stats.repaired += 0'],
+  ['repair counter never moves', 'stats.repaired += 1\n      warnOnce(options)', 'warnOnce(options)'],
+  // The extension-field seam: the half of the request `llm/stream` never sees.
+  ['extension seam never mounted', '  mountExtensionGuard(ctx, ctx.logger)', ''],
+  ['acceptance dropped from the rebuilt result', 'return { fields: repairedFields(fields), accept: result.accept }', 'return { fields: repairedFields(fields) }'],
+  ['a clean prepared result is rebuilt anyway', 'if (affected.length === 0) return result', 'if (false) return result'],
+  ['rebuilt record gains a prototype', 'const rebuilt = Object.create(null)', 'const rebuilt = {}'],
+  ['clean sibling field rebuilt instead of carried', 'rebuilt[key] = containsLoneSurrogate(value) ? sanitizeStrings(value) : value', 'rebuilt[key] = sanitizeStrings(value)'],
+  ['shadow installed on the service view instead of the instance', 'const registry = service?.[ORIGINAL] ?? service', 'const registry = service'],
+  ['extension repair counter never moves', 'stats.repaired += 1\n    warnOnce(affected)', 'warnOnce(affected)'],
+  ['disposer leaves the shadow in place', 'if (own) registry.prepare = original\n    else delete registry.prepare', 'void own'],
 ]
 
 /** Every run is bounded, so a hung mutant costs one arm rather than the harness. */
@@ -65,7 +74,7 @@ function runSuite() {
   let output
   let ok = true
   try {
-    output = execFileSync(process.execPath, ['--test', '--test-timeout=20000', 'test/guard.spec.mjs', 'test/wire.spec.mjs'], {
+    output = execFileSync(process.execPath, ['--test', '--test-timeout=20000', 'test/guard.spec.mjs', 'test/wire.spec.mjs', 'test/extensions.spec.mjs'], {
       cwd: ROOT,
       encoding: 'utf8',
       shell: false,
@@ -120,12 +129,31 @@ if (!control.ok || control.failed !== 0) {
 }
 console.log(`control: ${control.total}/${control.total} pass`)
 
+/**
+ * Mutants no test can ever kill, because the mutation does not change behaviour.
+ *
+ * Naming one here is the honest reading of a survivor. Deleting it from the list
+ * would make the gate look complete while testing less, and leaving it to fail
+ * would make an equivalent mutant look like a hole in the suite. Each entry
+ * states the measurement that proves the equivalence.
+ */
+const EQUIVALENTS = new Map([
+  ['shadow installed on the service view instead of the instance',
+    'Cordis forwards a property write on a service view to the service instance — measured: the own property lands on the instance, and every later fresh view hits the shadow — so both spellings install the same seam. The instance form is kept because `Object.hasOwn` on a view reports false for a property the instance already owns, which would make the disposer mis-restore.'],
+])
+
 const survivors = []
 for (const [label, find, replace] of MUTANTS) {
   const result = runMutant(find, replace)
   const caught = !result.ok && result.failed > 0
-  console.log(`${caught ? 'CAUGHT  ' : 'SURVIVED'}  ${label}${caught ? ` (${result.failed}/${result.total} failing)` : ''}`)
-  if (!caught) survivors.push(label)
+  if (caught) {
+    console.log(`CAUGHT      ${label} (${result.failed}/${result.total} failing)`)
+  } else if (EQUIVALENTS.has(label)) {
+    console.log(`EQUIVALENT  ${label}`)
+  } else {
+    console.log(`SURVIVED    ${label}`)
+    survivors.push(label)
+  }
 }
 
 // A killed run can leave the source mutated, so prove it did not before trusting the verdict.
@@ -135,7 +163,7 @@ if (digest(readFileSync(TARGET, 'utf8')) !== digest(original)) {
   process.exit(1)
 }
 
-console.log(`\n${MUTANTS.length - survivors.length}/${MUTANTS.length} mutants caught; source intact (${digest(original)})`)
+console.log(`\n${MUTANTS.length - survivors.length - EQUIVALENTS.size}/${MUTANTS.length} mutants caught, ${EQUIVALENTS.size} equivalent; source intact (${digest(original)})`)
 if (survivors.length > 0) {
   console.error(`surviving mutants are suite gaps, not acceptable results: ${survivors.join('; ')}`)
   process.exit(1)

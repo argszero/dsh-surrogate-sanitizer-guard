@@ -1,7 +1,7 @@
 {
   "name": "@argszero/dsh-surrogate-sanitizer-guard",
-  "version": "0.1.1",
-  "description": "Repair lone UTF-16 surrogates on the outgoing model request, so one truncated string in a session's durable history cannot make every later turn fail.",
+  "version": "0.2.0",
+  "description": "Repair lone UTF-16 surrogates on the outgoing DeepSeek request — the model request and the extension fields merged into it — so one truncated string in a session's durable history cannot make every later turn fail.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-deepseek-llm-api-extensions": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-llm-deepseek": "^0.2.1-rc.2"
   },
