@@ -13,6 +13,13 @@
  *   - every run is bounded and `lib/index.js` is restored in a `finally`, so a
  *     killed or hung run cannot leave the shipped source mutated.
  *
+ * `test/resolution.spec.mjs` is deliberately outside this gate. Every one of its
+ * arms spawns a child process, and two of them copy a host tree to build the
+ * layout the question is about, so scoring it once per mutant would multiply the
+ * gate's whole budget by the cost of a process herd. It runs in `npm test`, where
+ * the arms decide whether the resolver may be trusted at all; the gate below
+ * decides whether the repair may.
+ *
  * Run: node scripts/inject-defects.mjs
  */
 import { execFileSync } from 'node:child_process'
@@ -42,9 +49,9 @@ const MUTANTS = [
   ['shared nodes duplicated', 'if (seen.has(value)) return seen.get(value)', ''],
   ['different strings in one message are not all repaired', 'for (const key of Object.keys(value)) fields[key] = rebuild(value[key])', 'for (const key of Object.keys(value).slice(0, 1)) fields[key] = rebuild(value[key])'],
   ['tool declarations left unrepaired', 'for (const key of Object.keys(value)) fields[key] = rebuild(value[key])', 'for (const key of Object.keys(value)) fields[key] = key === \'tools\' ? value[key] : rebuild(value[key])'],
-  ['loop marker dropped from the replacement', 'if (isAgentLoopRequest(options)) markAgentLoopRequest(replacement)', 'void isAgentLoopRequest'],
-  ['loop marker invented for hand-built requests', 'if (isAgentLoopRequest(options)) markAgentLoopRequest(replacement)', 'markAgentLoopRequest(replacement)'],
-  ['a failure rejects the request', '      return next()\n    }\n  }\n\n  function warnOnce', '      throw _sanitizerFailed\n    }\n  }\n\n  function warnOnce'],
+  ['loop marker dropped from the replacement', 'if (llm.isAgentLoopRequest(original)) llm.markAgentLoopRequest(replacement)', 'void llm.isAgentLoopRequest'],
+  ['loop marker invented for hand-built requests', 'if (llm.isAgentLoopRequest(original)) llm.markAgentLoopRequest(replacement)', 'llm.markAgentLoopRequest(replacement)'],
+  ['a failure rejects the request', '      return next()\n    }\n  }\n\n  /**\n   * Report an unreachable marker once per instance.', '      throw _sanitizerFailed\n    }\n  }\n\n  /**\n   * Report an unreachable marker once per instance.'],
   ['listener not prepended', ', { prepend: true })', ')'],
   ['service requirement dropped', "export const inject = ['llm']", 'export const inject = []'],
   ['default export loses its inject', 'export default { name, inject, apply }', 'export default { name, apply }'],

@@ -135,14 +135,71 @@ rather than loading inert. The extension registry is **not** required — it is
 attached when present, so a profile that never mounts it still gets the
 `llm/stream` half.
 
+### Loading in a profile (0.2.1)
+
+0.2.0 had one defect that made everything above moot: it imported
+`@deepseek-ai/dsh-llm` at module scope, which is fatal in a profile. A profile
+installs with `autoInstallPeers: false`, so pnpm installs the package's own
+dependencies and none of its peers, Node resolves that bare specifier from the
+plugin's own directory, finds nothing, and the module never evaluates — the
+loader never sees the plugin, and the session-killer it exists to prevent goes
+unprevented.
+
+Declaring `@deepseek-ai/dsh-llm` as a real `dependency` is not the repair: it
+moves the failure one level deeper (`dsh-llm`'s own entry imports its own
+peers), and where it does load, the profile's copy wins resolution for the whole
+process and silently shadows the host's core packages — the crash discussion
+#10338 reports.
+
+0.2.1 asks the running host instead (`lib/host.js`). A bare specifier is resolved
+from a base path, `require()` of an ES module answers with the namespace the host
+already loaded, and the base path is a frame the host itself produced. The
+package now declares **no** harness import anywhere and ships nothing it does not
+resolve at runtime.
+
+The two halves of that are not equal, and the difference is the reason this
+version reports where it resolved from:
+
+- **The repair needs nothing from the host.** The walk, the predicate and
+  `toWellFormed()` are the plugin's own code, so a request is still repaired when
+  no host module can be reached.
+- **The loop marker is borrowed, and a wrong instance is worse than none.** It is
+  re-stamped only on a repaired envelope — a rebuilt request does not inherit the
+  loop's marker, because the marker is a module-scope `WeakSet` membership rather
+  than a property. A *second copy* of `dsh-llm` carries a second, empty set and
+  answers `false` for every request the loop ever marked: silent, permanent, and
+  invisible from the outside. So a resolution is disclosed as `host-frame` (a
+  frame inside the borrowed package itself — proof the instance is the caller's)
+  or `fallback` (it may be a second copy), never assumed.
+
+An unreachable host is reported once, at error level, with every anchor tried and
+a failure counted, and `resolutionReport()` answers `reached: false` with
+`inactive: true`. It is never converted into a verdict about the request: "this
+request carried no surrogate" and "this plugin could not reach the host" are
+different facts, and only one of them is about the request.
+
 ## Verification
 
 ```sh
 npm install
-node --test --test-timeout=30000 test/*.spec.mjs   # 44 tests
+node --test --test-timeout=30000 test/*.spec.mjs   # 52 tests
 node scripts/mount-smoke.mjs                       # mount on cordis 4.0.5, teardown observable
 node scripts/inject-defects.mjs                    # 32 mutants, control first, 31 caught + 1 named equivalent
 ```
+
+`test/resolution.spec.mjs` decides whether the resolver may be trusted, and each
+of its arms runs in a child process because the shapes that answer the question
+are process-level: the working directory, `process.argv[1]`, and whether the
+borrowed package is on the stack. It reads the shipped sources as text to assert
+that no module-scope harness import exists at all — the one vantage point that
+does not depend on the checking tree's own `node_modules`, which is why 0.2.0's
+suite was green while the profile could not load it. It then builds a host tree,
+puts the probe inside the borrowed package, and compares the predicate **by
+identity** against the namespace the probe itself imported; a decoy copy is the
+disagreeing control, and it must be disclosed as `fallback` and must show a
+different `version`. Two further arms pin the failure mode: with nowhere to
+resolve, the report says `inactive` and lists its anchors, and a request is still
+repaired.
 
 `test/wire.spec.mjs` drives the real `@deepseek-ai/dsh-llm-deepseek` adapter
 with a capturing `fetch`. The discriminator is one field,
