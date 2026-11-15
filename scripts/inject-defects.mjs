@@ -37,8 +37,9 @@ const digest = text => createHash('sha256').update(text).digest('hex').slice(0, 
 const MUTANTS = [
   ['recursion guard removed', 'if (dispatched.has(options)) return next()', 'if (false) return next()'],
   ['redispatch is not recorded', 'dispatched.add(replacement)\n', ''],
-  ['predicate disabled: every request rebuilt', 'if (!containsLoneSurrogate(options)) return next()', 'if (false) return next()'],
-  ['predicate disabled: nothing is ever rebuilt', 'if (!containsLoneSurrogate(options)) return next()', 'if (true) return next()'],
+  ['predicate disabled: every request rebuilt', 'if (!strings && !patterns) return next()', 'if (false) return next()'],
+  ['predicate disabled: nothing is ever rebuilt', 'if (!strings && !patterns) return next()', 'if (true) return next()'],
+  ['the schema half of the predicate is ignored', 'const patterns = containsSurrogatePattern(options.tools)', 'const patterns = false'],
   ['no substitution is made', 'return text.isWellFormed() ? text : text.toWellFormed()', 'return text'],
   ['non-strings reported as defects', "return typeof text === 'string' && !text.isWellFormed()", 'return !text'],
   ['the walk skips strings', "if (typeof value === 'string') return !value.isWellFormed()", "if (typeof value === 'string') return false"],
@@ -58,7 +59,18 @@ const MUTANTS = [
   ['warning repeated every request', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`\n    if (reported.has(key)) return', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`'],
   ['warning key collapses to one route', 'const key = `${String(options.provider)}\\u0000${String(options.model)}`', "const key = 'route'"],
   ['request counter never moves', 'stats.requests += 1', ''],
-  ['repair counter never moves', 'stats.repaired += 1\n      warnOnce(options)', 'warnOnce(options)'],
+  ['repair counter never moves', 'stats.repaired += 1\n      warnOnce(options, { strings, patterns })', 'warnOnce(options, { strings, patterns })'],
+  // The schema half: a `pattern` that names a surrogate code point.
+  ['a surrogate pattern is never dropped', "if (key === 'pattern' && namesSurrogateEscape(value[key])) {", 'if (false) {'],
+  ['every pattern keyword is dropped', "if (key === 'pattern' && namesSurrogateEscape(value[key])) {", "if (key === 'pattern') {"],
+  ['an escaped escape treated as a surrogate range', 'if (backslashes % 2 === 0) return true', 'return true'],
+  ['the backslash parity is inverted', 'if (backslashes % 2 === 0) return true', 'if (backslashes % 2 === 1) return true'],
+  ['instance data is walked as schemas', 'const next = DATA_KEYWORDS.has(key) ? value[key] : withoutSurrogatePatterns(value[key])', 'const next = withoutSurrogatePatterns(value[key])'],
+  ['the schema cache is skipped', 'let repaired = repairedSchemas.get(parameters)', 'let repaired'],
+  ['a repaired schema is left unfrozen', 'return changed ? Object.freeze(fields) : value', 'return changed ? fields : value'],
+  ['a repaired tool list is left unfrozen', 'return changed ? Object.freeze(repaired) : tools', 'return changed ? repaired : tools'],
+  ['an unaffected tool is rebuilt anyway', 'if (parameters === tool.parameters) return tool', 'if (false) return tool'],
+  ['a clean schema is reported as defective', 'return tools.some(tool => isPlainRecord(tool) && deepSeekSafeParameters(tool.parameters) !== tool.parameters)', 'return tools.some(tool => isPlainRecord(tool))'],
   // The extension-field seam: the half of the request `llm/stream` never sees.
   ['extension seam never mounted', '  mountExtensionGuard(ctx, ctx.logger)', ''],
   ['acceptance dropped from the rebuilt result', 'return { fields: repairedFields(fields), accept: result.accept }', 'return { fields: repairedFields(fields) }'],
@@ -81,7 +93,7 @@ function runSuite() {
   let output
   let ok = true
   try {
-    output = execFileSync(process.execPath, ['--test', '--test-timeout=20000', 'test/guard.spec.mjs', 'test/wire.spec.mjs', 'test/extensions.spec.mjs'], {
+    output = execFileSync(process.execPath, ['--test', '--test-timeout=20000', 'test/guard.spec.mjs', 'test/tool-schema.spec.mjs', 'test/wire.spec.mjs', 'test/extensions.spec.mjs'], {
       cwd: ROOT,
       encoding: 'utf8',
       shell: false,

@@ -135,3 +135,46 @@ test('the durable record is byte-identical after the guarded frame goes out', as
   assert.equal(JSON.stringify(options), before, 'the session record the loop holds must not change')
   assert.equal(textOf(options.messages[0]), LONE_HIGH, 'the producer bytes survive for the core fix to see')
 })
+
+/** The pattern REA 6.9.0 ships on 14 tools, spelled in ASCII exactly as reported. */
+const REPORTED = String.raw`^[^\uD800-\uDFFF]*$`
+
+/** Two declared tools: one schema the returned API rejects, one it accepts. */
+const reportedTools = () => [
+  {
+    name: 'mcp__rea__binary_session',
+    description: 'a schema the Messages API rejects',
+    parameters: {
+      type: 'object',
+      properties: { path: { type: 'string', pattern: REPORTED } },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'read',
+    description: 'a clean sibling',
+    parameters: { type: 'object', properties: { path: { type: 'string', pattern: '^/[a-z]+$' } } },
+  },
+]
+
+test('unguarded, the surrogate pattern really does reach the wire as input_schema', async () => {
+  const sent = await transcribe(request([user('list the binary')], { tools: reportedTools() }))
+  assert.equal(sent.body.tools[0].input_schema.properties.path.pattern, REPORTED,
+    'the adapter sends tool.parameters unchanged — the defect the report describes')
+  assert.ok(sent.raw.includes('\\\\uD800'), 'and the body carries it as an escaped backslash-u')
+})
+
+test('guarded, that pattern is gone from the wire and nothing else about the tools changes', async () => {
+  const options = request([user('list the binary')], { tools: reportedTools() })
+  const replacement = guarded(options)
+  assert.notEqual(replacement, undefined, 'the guard must hand over a replacement')
+  const sent = await transcribe(replacement)
+  assert.equal(sent.body.tools[0].input_schema.properties.path.pattern, undefined, 'the rejected keyword is gone')
+  assert.equal(sent.body.tools[0].input_schema.properties.path.type, 'string', 'the rest of that schema survives')
+  assert.deepEqual(sent.body.tools[0].input_schema.required, ['path'])
+  assert.equal(sent.body.tools[0].name, 'mcp__rea__binary_session', 'the declaration survives')
+  assert.equal(sent.body.tools[1].input_schema.properties.path.pattern, '^/[a-z]+$', 'the clean sibling is untouched')
+  assert.ok(!sent.raw.includes('\\\\uD800'), 'no surrogate escape survives on the wire')
+  assert.equal(JSON.stringify(options.tools[0].parameters.properties.path.pattern), JSON.stringify(REPORTED),
+    'and the caller tool list still declares what the server declared')
+})

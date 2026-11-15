@@ -1,8 +1,10 @@
 # dsh-surrogate-sanitizer-guard
 
-Repair lone UTF-16 surrogates on the outgoing DeepSeek request — both halves of
-it, the model request and the extension fields merged into it — so one truncated
-string in a session's durable history cannot make every later turn fail.
+Repair the two things a surrogate code point breaks on the outgoing DeepSeek
+request: a lone UTF-16 surrogate in the model request or in the extension fields
+merged into it, and a tool `pattern` that names the surrogate range. Either one
+is enough for the API to reject the **whole** request, so either one can make
+every later turn of a session fail.
 
 ## The failure
 
@@ -17,13 +19,37 @@ lone surrogate, so the session fails permanently: the defect is in the history,
 and the history never changes. Nothing the user types afterwards can help,
 because the poison is in the part of the request the user does not write.
 
+## The second failure: a schema that names the range
+
+A tool's `parameters` go to the Messages API unchanged — `dsh-llm-deepseek`
+builds `input_schema: tool.parameters` and asks nothing about the contents. An
+MCP server is free to declare a `pattern` like
+
+```
+^[^\uD800-\uDFFF]*$
+```
+
+That is valid ECMA-262 and invalid to an API that compiles patterns with a
+Unicode scalar-value regex engine, where a surrogate code point is not a
+character at all. The API answers `"..." is not a "regex"` and rejects the
+**whole request**, not the one tool — so a single schema shipped by one server
+takes down every turn of the session, and the schema belongs to a package this
+harness does not write.
+
+This is a second repair rather than a second caller of the first, and the reason
+is worth stating: that pattern is **well formed text**. It spells a surrogate;
+it contains none. The `isWellFormed()` walk that catches the first failure is
+blind to it by construction, and so is every other predicate over the request's
+strings.
+
 ## What it does
 
 The outgoing body has **two authors**, and only one of them goes through
 `llm/stream`. The plugin covers both.
 
 **1. The model request** — the plugin listens on the `llm/stream` waterfall,
-prepended, and walks the request for a string carrying a lone surrogate.
+prepended, and walks the request for a string carrying a lone surrogate, and for
+a declared tool whose schema carries a `pattern` naming the surrogate range.
 
 - **Nothing found** — the caller's own request reaches `next()` untouched. This
   is the ordinary case and it is decided by identity, not by a copy.
@@ -84,6 +110,20 @@ This repairs the outgoing frame, not the producer.
   rejoined character. Rejoining would mean guessing that two fragments of a
   session log were one string, and a wrong guess corrupts content that was
   never broken.
+- The `pattern` is dropped from **the outgoing frame only**. The definition the
+  harness registered is untouched, so local argument validation still enforces
+  what the server declared; only the copy the API compiles loses the keyword.
+- Dropping it does not narrow what the model may send. A pattern naming the
+  surrogate range can only reject strings carrying a lone surrogate, and JSON
+  text cannot carry one, so the constraint was already unsatisfiable on this
+  path. What is lost is the server's *own* check — the request is no longer
+  refused for that reason, and the tool's validation is left to the tool.
+- A pattern that matches the **literal text** `\uD800` is not this defect, and is
+  kept: the escape must not itself be escaped, which is decided by counting the
+  backslashes in front of it. A pattern reaching the same constraint some other
+  way — a character class spelled with code-point arithmetic, a lookbehind, any
+  construct the two engines disagree about — is **not** covered. This repairs
+  the surrogate range and nothing else.
 - The string is repaired on the way out, so the model reads U+FFFD where the
   cut happened. That is what the pi-ai routes already do; the DeepSeek Messages
   path does not.
@@ -112,8 +152,12 @@ nothing.
 ## Install
 
 ```sh
-dsh plugin --profile <profile> add github:argszero/dsh-surrogate-sanitizer-guard
+dsh plugin --profile <profile> add github:argszero/dsh-surrogate-sanitizer-guard#v0.3.0
 ```
+
+Pin the tag. The default branch is a moving target, and a profile that installs
+from it gets whatever was pushed last rather than the version this README
+describes.
 
 That single command is the whole install: it installs the package into the
 profile and adds it to the profile's bundle list. A plain `npm i` of the same
@@ -182,9 +226,9 @@ different facts, and only one of them is about the request.
 
 ```sh
 npm install
-node --test --test-timeout=30000 test/*.spec.mjs   # 52 tests
+node --test --test-timeout=30000 test/*.spec.mjs   # 70 tests
 node scripts/mount-smoke.mjs                       # mount on cordis 4.0.5, teardown observable
-node scripts/inject-defects.mjs                    # 32 mutants, control first, 31 caught + 1 named equivalent
+node scripts/inject-defects.mjs                    # 43 mutants, control first, 42 caught + 1 named equivalent
 ```
 
 `test/resolution.spec.mjs` decides whether the resolver may be trusted, and each
@@ -207,6 +251,15 @@ with a capturing `fetch`. The discriminator is one field,
 carries U+FFFD, and every other byte of the body is identical. A
 well-formed request is dispatched untouched, and the durable record is
 byte-identical after the guarded frame goes out.
+
+`test/tool-schema.spec.mjs` decides the second repair on its own terms: which
+escape spellings name a surrogate range, that an escaped escape is content and
+not a defect, that instance data is never walked, that a clean schema and an
+unaffected tool keep their identity, and that a repaired schema is frozen and
+repaired once so repeated requests serialize identical bytes. Its two wire arms
+in `test/wire.spec.mjs` are the pair that matters: unguarded, the reported
+pattern reaches the transport as `input_schema`; guarded, the keyword is gone and
+every other byte of the tool list is unchanged.
 
 `test/extensions.spec.mjs` takes the same reading for the second seam. It mounts
 the real `@deepseek-ai/dsh-deepseek-llm-api-extensions` registry, registers a

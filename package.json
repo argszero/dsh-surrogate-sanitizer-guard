@@ -1,7 +1,7 @@
 {
   "name": "@argszero/dsh-surrogate-sanitizer-guard",
-  "version": "0.2.1",
-  "description": "Repair lone UTF-16 surrogates on the outgoing DeepSeek request \u2014 the model request and the extension fields merged into it \u2014 so one truncated string in a session's durable history cannot make every later turn fail.",
+  "version": "0.3.0",
+  "description": "Repair the two things one surrogate code point breaks on the outgoing DeepSeek request \u2014 a lone surrogate in the model request or the extension fields merged into it, and a tool `pattern` that names the surrogate range \u2014 so neither a truncated string nor one MCP server's schema can make every later turn fail.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
